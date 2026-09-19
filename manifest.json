@@ -1,0 +1,18 @@
+{
+  "name": "Space Invaders – Bunker Edition",
+  "short_name": "Space Invaders",
+  "description": "Mobiles Space-Invaders-Spiel mit Touch-Steuerung und Bunkern.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#05070d",
+  "theme_color": "#05070d",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

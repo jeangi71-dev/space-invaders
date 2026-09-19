@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#05070d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<title>Space Invaders – Bunker Edition</title>
+<style>
+:root{--bg:#05070d;--panel:#0b1020;--line:#26304a;--text:#eef3ff;--muted:#93a0bd;--accent:#63e6be}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif;min-height:100%;touch-action:manipulation}
+body{display:flex;justify-content:center}
+#wrap{width:min(100%,760px);padding:12px}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+h1{font-size:18px;margin:0}.stats{display:flex;gap:10px;font-size:13px;color:var(--muted);flex-wrap:wrap;justify-content:flex-end}
+.stat b{color:var(--text)}
+#gameBox{position:relative;background:#02040a;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+canvas{display:block;width:100%;height:auto;background:#02040a}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(2,4,10,.72);padding:20px}
+.card{max-width:420px;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px}
+.card h2{margin:0 0 8px;font-size:24px}.card p{margin:8px 0 18px;color:var(--muted);line-height:1.45}
+button{font:inherit;font-weight:700;border:1px solid var(--line);background:#121a2c;color:var(--text);border-radius:12px;min-height:48px;padding:10px 18px;cursor:pointer}
+#startBtn{background:var(--accent);color:#04110d;border-color:transparent}
+#touchArea{margin-top:10px;min-height:52px;border:1px solid var(--line);border-radius:12px;background:#0b1020;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;user-select:none;-webkit-user-select:none;touch-action:none}
+#hint{margin-top:8px;color:var(--muted);font-size:12px;text-align:center}
+canvas{touch-action:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+<header>
+<h1>👾 Space Invaders</h1>
+<div class="stats">
+<span class="stat">Punkte <b id="score">0</b></span>
+<span class="stat">Leben <b id="lives">3</b></span>
+<span class="stat">Level <b id="level">1</b></span>
+</div>
+</header>
+<div id="gameBox">
+<canvas id="game" width="720" height="620" aria-label="Space Invaders Spielfeld"></canvas>
+<div id="overlay">
+<div class="card">
+<h2 id="overlayTitle">Bunker Edition</h2>
+<p id="overlayText">Bewege dein Schiff, während es automatisch feuert. Deine Schüsse und die Schüsse der Aliens beschädigen die Bunker.</p>
+<button id="startBtn" type="button">▶ Start</button>
+</div>
+</div>
+</div>
+<div id="touchArea" aria-label="Touch-Steuerung"><span>Finger auf dem Spielfeld bewegen: Schiff folgt deinem Finger</span></div>
+<div id="hint">Finger links/rechts auf dem Spielfeld bewegen · Leertaste pausiert</div>
+</div>
+<script>
+(() => {
+"use strict";
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+const scoreEl=document.getElementById("score"),livesEl=document.getElementById("lives"),levelEl=document.getElementById("level");
+const overlay=document.getElementById("overlay"),overlayTitle=document.getElementById("overlayTitle"),overlayText=document.getElementById("overlayText"),startBtn=document.getElementById("startBtn");
+const W=canvas.width,H=canvas.height;
+let raf=0,last=0,running=false,paused=false,score=0,lives=3,level=1;
+let keys={left:false,right:false}, player, aliens=[], bullets=[], enemyBullets=[], bunkers=[], enemyDir=1,enemyTimer=0,shotTimer=0,alienStepTimer=0,particles=[];
+let touchActive=false;
+const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function resetLevel(){
+  player={x:W/2-24,y:H-64,w:48,h:24,speed:330};
+  bullets=[];enemyBullets=[];particles=[];
+  aliens=[];
+  const rows=4,cols=9,aw=34,ah=22,gx=38,gy=34;
+  const startX=(W-(cols*aw+(cols-1)*gx))/2;
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++) aliens.push({x:startX+c*(aw+gx),y:58+r*(ah+gy),w:aw,h:ah,row:r,alive:true});
+  enemyDir=1;enemyTimer=0;alienStepTimer=0;shotTimer=0;
+  createBunkers();
+}
+function createBunkers(){
+  bunkers=[];
+  const shapes=[
+    "  ######  "," ######## ","##########","##########","###    ###","##      ##","##      ##"
+  ];
+  const count=3,cell=8,bw=80,bh=56;
+  for(let b=0;b<count;b++){
+    const x=95+b*265,y=455;
+    const cells=[];
+    for(let r=0;r<shapes.length;r++)for(let c=0;c<shapes[r].length;c++)if(shapes[r][c]==="#")
+      cells.push({x:x+c*cell,y:y+r*cell,hp:2,max:2});
+    bunkers.push({x,y,w:bw,h:bh,cells});
+  }
+}
+function startGame(){
+  score=0;lives=3;level=1;running=true;paused=false;
+  resetLevel();hideOverlay();updateStats();last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);
+}
+function hideOverlay(){overlay.style.display="none"}
+function showOverlay(title,text,button){
+  overlayTitle.textContent=title;overlayText.textContent=text;startBtn.textContent=button;overlay.style.display="flex";
+}
+function updateStats(){scoreEl.textContent=score;livesEl.textContent=lives;levelEl.textContent=level}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function rectHit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function firePlayer(){
+  bullets.push({x:player.x+player.w/2-2,y:player.y-8,w:4,h:13,vy:-520});
+}
+function enemyFire(){
+  const alive=aliens.filter(a=>a.alive); if(!alive.length)return;
+  const cols={};
+  for(const a of alive)cols[Math.round(a.x/10)]=a;
+  const shooters=Object.values(cols);
+  const a=shooters[(Math.random()*shooters.length)|0];
+  enemyBullets.push({x:a.x+a.w/2-2,y:a.y+a.h,w:4,h:12,vy:145+level*12});
+}
+function damageBunker(x,y,w,h){
+  for(const bunker of bunkers){
+    for(const cell of bunker.cells){
+      if(cell.hp>0 && x<cell.x+8&&x+w>cell.x&&y<cell.y+8&&y+h>cell.y){
+        cell.hp--;
+        particles.push({x:cell.x+4,y:cell.y+4,t:.25});
+        return true;
+      }
+    }
+  }
+  return false;
+}
+function update(dt){
+  if(!running||paused)return;
+  const dir=(keys.right?1:0)-(keys.left?1:0);
+  player.x=clamp(player.x+dir*player.speed*dt,8,W-player.w-8);
+
+  shotTimer+=dt;
+  if(shotTimer>=.24){shotTimer=0;firePlayer();}
+  for(const b of bullets)b.y+=b.vy*dt;
+  for(const b of enemyBullets)b.y+=b.vy*dt;
+
+  // Player shots: bunker collision first, then aliens.
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    if(b.y<0){bullets.splice(i,1);continue}
+    if(damageBunker(b.x,b.y,b.w,b.h)){bullets.splice(i,1);continue}
+    let hit=false;
+    for(const a of aliens)if(a.alive&&rectHit(b,a)){
+      a.alive=false;score+=10*(a.row+1);hit=true;particles.push({x:a.x+a.w/2,y:a.y+a.h/2,t:.3});break;
+    }
+    if(hit)bullets.splice(i,1);
+  }
+  // Enemy shots: bunker collision first, then player.
+  for(let i=enemyBullets.length-1;i>=0;i--){
+    const b=enemyBullets[i];
+    if(b.y>H){enemyBullets.splice(i,1);continue}
+    if(damageBunker(b.x,b.y,b.w,b.h)){enemyBullets.splice(i,1);continue}
+    if(rectHit(b,player)){
+      enemyBullets.splice(i,1);lives--;updateStats();
+      player.x=W/2-player.w/2;
+      if(lives<=0){running=false;showOverlay("Game Over","Punkte: "+score+" · Level: "+level,"↻ Neustart");}
+      break;
+    }
+  }
+  const alive=aliens.filter(a=>a.alive);
+  if(!alive.length){level++;updateStats();resetLevel();return}
+
+  alienStepTimer+=dt;
+  const stepEvery=Math.max(.18,.72-alive.length*.008-level*.015);
+  if(alienStepTimer>=stepEvery){
+    alienStepTimer=0;
+    let minX=Infinity,maxX=-Infinity;
+    for(const a of alive){minX=Math.min(minX,a.x);maxX=Math.max(maxX,a.x+a.w)}
+    if((enemyDir>0&&maxX+18>=W)||(enemyDir<0&&minX-18<=0)){
+      enemyDir*=-1;
+      for(const a of alive)a.y+=18;
+    }else for(const a of alive)a.x+=enemyDir*18;
+    if(alive.some(a=>a.y+a.h>=player.y-18)){
+      lives=0;updateStats();running=false;showOverlay("Invasion","Die Aliens haben deine Verteidigung erreicht.","↻ Neustart");
+    }
+  }
+  enemyTimer+=dt;
+  if(enemyTimer>=Math.max(.42,1.15-level*.05)){enemyTimer=0;enemyFire()}
+  for(let i=particles.length-1;i>=0;i--){particles[i].t-=dt;if(particles[i].t<=0)particles.splice(i,1)}
+  updateStats();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#02040a";ctx.fillRect(0,0,W,H);
+  // stars
+  ctx.fillStyle="#26304a";
+  for(let i=0;i<50;i++){const x=(i*137)%W,y=(i*83)%430;ctx.fillRect(x,y,1,1)}
+  // aliens
+  for(const a of aliens)if(a.alive){
+    ctx.fillStyle=a.row===0?"#ff8fab":a.row===1?"#ffd166":"#63e6be";
+    ctx.fillRect(a.x+5,a.y+4,a.w-10,a.h-8);
+    ctx.fillRect(a.x+9,a.y,a.w-18,5);
+    ctx.fillRect(a.x+2,a.y+9,5,7);ctx.fillRect(a.x+a.w-7,a.y+9,5,7);
+    ctx.fillStyle="#02040a";ctx.fillRect(a.x+10,a.y+8,4,4);ctx.fillRect(a.x+a.w-14,a.y+8,4,4);
+  }
+  // bunkers
+  for(const bunker of bunkers)for(const c of bunker.cells)if(c.hp>0){
+    ctx.fillStyle=c.hp===2?"#79a7ff":"#46648f";ctx.fillRect(c.x,c.y,7,7);
+  }
+  // player
+  ctx.fillStyle="#63e6be";ctx.fillRect(player.x+5,player.y+8,player.w-10,14);
+  ctx.fillRect(player.x+18,player.y,12,10);
+  // shots
+  ctx.fillStyle="#f5f7ff";for(const b of bullets)ctx.fillRect(b.x,b.y,b.w,b.h);
+  ctx.fillStyle="#ff6b6b";for(const b of enemyBullets)ctx.fillRect(b.x,b.y,b.w,b.h);
+  for(const p of particles){ctx.fillStyle="#fff3a3";ctx.fillRect(p.x-2,p.y-2,4,4)}
+  ctx.fillStyle="#26304a";ctx.fillRect(0,H-18,W,1);
+}
+function loop(t){
+  const dt=Math.min(.033,(t-last)/1000||0);last=t;
+  update(dt);draw();
+  if(running)raf=requestAnimationFrame(loop);
+}
+function moveToFinger(e){
+  if(!player)return;
+  const r=canvas.getBoundingClientRect();
+  const x=clamp((e.clientX-r.left)*(W/r.width),0,W);
+  player.x=clamp(x-player.w/2,8,W-player.w-8);
+}
+canvas.addEventListener("pointerdown",e=>{if(e.pointerType==="touch"||e.pointerType==="pen"){e.preventDefault();touchActive=true;canvas.setPointerCapture?.(e.pointerId);moveToFinger(e);}});
+canvas.addEventListener("pointermove",e=>{if(touchActive){e.preventDefault();moveToFinger(e);}});
+canvas.addEventListener("pointerup",()=>{touchActive=false});
+canvas.addEventListener("pointercancel",()=>{touchActive=false});
+window.addEventListener("keydown",e=>{
+  if(e.key==="ArrowLeft"||e.key.toLowerCase()==="a"){keys.left=true;e.preventDefault()}
+  if(e.key==="ArrowRight"||e.key.toLowerCase()==="d"){keys.right=true;e.preventDefault()}
+  if(e.code==="Space"&&running){paused=!paused;e.preventDefault();if(paused)showOverlay("Pause","Drücke Leertaste, um weiterzuspielen.","▶ Weiter");else hideOverlay()}
+});
+window.addEventListener("keyup",e=>{
+  if(e.key==="ArrowLeft"||e.key.toLowerCase()==="a")keys.left=false;
+  if(e.key==="ArrowRight"||e.key.toLowerCase()==="d")keys.right=false;
+});
+startBtn.addEventListener("click",()=>{if(!running||lives<=0)startGame();else{paused=false;hideOverlay()}});
+resetLevel();draw();updateStats();
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
